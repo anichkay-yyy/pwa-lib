@@ -41,10 +41,20 @@ export interface ManifestConfig {
 }
 
 export interface NotificationsConfig {
+  /** Enable push notification handlers in generated SW (default: true) */
+  enabled?: boolean
   /** Default icon for notifications */
   defaultIcon?: string
   /** Badge icon for notifications */
   badge?: string
+  /** VAPID public key for push subscriptions */
+  vapidPublicKey?: string
+  /** Base URL of the push server (e.g. 'https://push.example.com') */
+  serverUrl?: string
+  /** Application identifier */
+  appId?: string
+  /** API key for server authentication */
+  apiKey?: string
 }
 
 export interface PwaConfig {

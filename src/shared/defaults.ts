@@ -60,8 +60,13 @@ export const DEFAULT_CONFIG: ResolvedPwaConfig = {
     routes: DEFAULT_ROUTES,
   },
   notifications: {
+    enabled: true,
     defaultIcon: '/icons/icon-192.png',
     badge: '/icons/badge-72.png',
+    vapidPublicKey: '',
+    serverUrl: '',
+    appId: '',
+    apiKey: '',
   },
   outDir: './public/icons',
 }

@@ -26,14 +26,30 @@ export async function buildServiceWorker(config: ResolvedPwaConfig, cwd: string 
     generateSwCore(cacheNames),
     generatePrecache(precacheUrls),
     generateCachingBlock(config.sw.routes),
-    generatePushHandler(config.notifications),
   ]
+
+  if (config.notifications.enabled) {
+    blocks.push(generatePushHandler(config.notifications))
+  }
 
   const swContent = blocks.join('\n')
 
   // Write the file
   await mkdir(dirname(outputPath), { recursive: true })
   await writeFile(outputPath, swContent, 'utf-8')
+
+  // Generate pwa-push.json if push server fields are configured
+  const { serverUrl, appId, apiKey } = config.notifications
+  if (serverUrl || appId || apiKey) {
+    const pushConfig = {
+      serverUrl,
+      appId,
+      apiKey,
+      vapidPublicKey: config.notifications.vapidPublicKey,
+    }
+    const pushConfigPath = resolve(cwd, 'public/pwa-push.json')
+    await writeFile(pushConfigPath, JSON.stringify(pushConfig, null, 2), 'utf-8')
+  }
 
   return outputPath
 }

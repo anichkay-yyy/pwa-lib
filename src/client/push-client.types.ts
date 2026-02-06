@@ -10,11 +10,13 @@ export type PushClientErrorCode =
 
 export interface PushClientConfig {
   /** Base URL of the push server (e.g. 'https://push.example.com') */
-  serverUrl: string
+  serverUrl?: string
   /** Application identifier */
-  appId: string
+  appId?: string
   /** API key for server authentication */
-  apiKey: string
+  apiKey?: string
+  /** VAPID public key. If provided, skips fetching from server */
+  vapidPublicKey?: string
 }
 
 export interface PushSubscriptionData {

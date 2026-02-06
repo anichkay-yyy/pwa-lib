@@ -9,7 +9,7 @@ Zero-config CLI-библиотека для полного управления 
 - **Генерация иконок** — из одного PNG (>= 512x512) создаёт 12 стандартных размеров, maskable-иконку с safe zone, `favicon.ico` с тремя размерами внутри. Всего 14 файлов. Использует `sharp` — нативный и быстрый.
 - **Генерация manifest.json** — полный веб-манифест с иконками, цветами, display mode, orientation, scope. Автоматически берёт `name` и `description` из `package.json`.
 - **Генерация Service Worker** — готовый `sw.js` с 5 стратегиями кэширования, роутингом по URL-паттернам, precache, push-уведомлениями, управлением жизненным циклом. Без Workbox, без runtime-зависимостей.
-- **Push-уведомления** — в SW генерируется обработчик `push` и `notificationclick`. На клиенте — готовый API для подписки через VAPID.
+- **Push-уведомления** — в SW генерируется обработчик `push` и `notificationclick`. На клиенте — `createPushClient()` делает всё за один вызов: подписка, VAPID, отправка на сервер. Конфиг подтягивается из `pwa.config.ts` автоматически.
 - **Watch mode** — `pwa-lib dev` следит за конфигом и `public/`, перегенерирует SW при изменениях.
 - **Клиентская библиотека** — `pwa-lib/client` экспортирует `registerSW()` и `notifications` API. Pure ESM, zero dependencies, tree-shakeable.
 - **TypeScript** — полная типизация конфига, клиентского API и всех экспортов. `defineConfig()` даёт автокомплит в IDE.
@@ -52,7 +52,8 @@ public/
 │   ├── apple-touch-icon.png
 │   └── favicon.ico
 ├── manifest.json
-└── sw.js
+├── sw.js
+└── pwa-push.json          # если настроены serverUrl/appId/apiKey
 ```
 
 ---
@@ -238,8 +239,15 @@ export default defineConfig({
   },
 
   // ─── Push-уведомления ──────────────────────────────────
-  // Настройки иконок для уведомлений в сгенерированном SW.
+  // Настройки push-уведомлений в сгенерированном SW.
+  // serverUrl, appId, apiKey записываются в public/pwa-push.json при generate —
+  // createPushClient() подтягивает их автоматически.
   notifications: {
+    // Включить обработчики push/notificationclick в SW.
+    // Если false — push-код не генерируется.
+    // Дефолт: true
+    enabled: true,
+
     // Иконка уведомления по умолчанию (если не передана в push payload).
     // Дефолт: '/icons/icon-192.png'
     defaultIcon: '/icons/icon-192.png',
@@ -247,6 +255,21 @@ export default defineConfig({
     // Badge — маленькая иконка в status bar (Android).
     // Дефолт: '/icons/badge-72.png'
     badge: '/icons/badge-72.png',
+
+    // VAPID public key для подписки на push-уведомления.
+    // Если указан — createPushClient() использует его напрямую,
+    // без запроса к серверу GET /apps/:appId/vapid-key.
+    // Дефолт: '' (запрашивается с сервера)
+    vapidPublicKey: 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkGs-GDq...',
+
+    // URL push-сервера. Подтягивается в createPushClient() автоматически.
+    serverUrl: 'https://push.example.com',
+
+    // Идентификатор приложения на push-сервере.
+    appId: 'my-app',
+
+    // API-ключ для аутентификации на push-сервере.
+    apiKey: 'your-api-key',
   },
 
   // ─── Выходная директория ───────────────────────────────
@@ -548,7 +571,17 @@ routes: [
 
 ### Конфиг: `notifications`
 
-Настройки иконок для push-уведомлений в сгенерированном Service Worker. Эти значения используются как fallback, если push-payload не содержит собственных иконок.
+Настройки push-уведомлений в сгенерированном Service Worker. Можно полностью отключить push-обработчики или настроить иконки-fallback. Также содержит параметры подключения к push-серверу (`serverUrl`, `appId`, `apiKey`) — при `pwa-lib generate` они записываются в `public/pwa-push.json`, и `createPushClient()` подтягивает их автоматически.
+
+#### `notifications.enabled`
+
+```ts
+{ notifications: { enabled: false } }
+```
+
+Включает или отключает обработчики `push` и `notificationclick` в сгенерированном SW. Если `false` — push-код не попадает в SW.
+
+**Дефолт:** `true`
 
 #### `notifications.defaultIcon`
 
@@ -569,6 +602,46 @@ routes: [
 Badge — маленькая монохромная иконка в status bar Android. Показывается, когда уведомление свёрнуто. Рекомендуется квадратная, 72x72 или 96x96, с прозрачным фоном.
 
 **Дефолт:** `'/icons/badge-72.png'`
+
+#### `notifications.vapidPublicKey`
+
+```ts
+{ notifications: { vapidPublicKey: 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkGs-GDq...' } }
+```
+
+VAPID public key для подписки на push-уведомления. Если указан, `createPushClient()` использует его напрямую — без запроса `GET /apps/:appId/vapid-key` к серверу. Это убирает лишний сетевой запрос при подписке.
+
+**Дефолт:** `''` (ключ запрашивается с сервера)
+
+#### `notifications.serverUrl`
+
+```ts
+{ notifications: { serverUrl: 'https://push.example.com' } }
+```
+
+URL push-сервера. При `pwa-lib generate` записывается в `public/pwa-push.json` и автоматически подтягивается в `createPushClient()`.
+
+**Дефолт:** `''`
+
+#### `notifications.appId`
+
+```ts
+{ notifications: { appId: 'my-app' } }
+```
+
+Идентификатор приложения на push-сервере. При `pwa-lib generate` записывается в `public/pwa-push.json` и автоматически подтягивается в `createPushClient()`.
+
+**Дефолт:** `''`
+
+#### `notifications.apiKey`
+
+```ts
+{ notifications: { apiKey: 'your-api-key' } }
+```
+
+API-ключ для аутентификации на push-сервере. При `pwa-lib generate` записывается в `public/pwa-push.json` и автоматически подтягивается в `createPushClient()`.
+
+**Дефолт:** `''`
 
 ---
 
@@ -722,6 +795,10 @@ export default defineConfig({
   notifications: {
     defaultIcon: '/icons/icon-192.png',
     badge: '/icons/icon-72.png',
+    vapidPublicKey: 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkGs-GDq...',
+    serverUrl: 'https://push.example.com',
+    appId: 'my-app',
+    apiKey: 'your-api-key',
   },
 })
 ```
@@ -747,13 +824,13 @@ pwa-lib init --yes    # без вопросов, сразу дефолты
 
 ### `pwa-lib generate`
 
-Основная команда. Генерирует всё разом: иконки + manifest + Service Worker.
+Основная команда. Генерирует всё разом: иконки + manifest + Service Worker + push-конфиг.
 
 ```bash
 pwa-lib generate
 ```
 
-Читает `pwa.config.ts` (или дефолты если конфига нет). Если иконка не найдена — генерация иконок пропускается, остальное генерируется.
+Читает `pwa.config.ts` (или дефолты если конфига нет). Если иконка не найдена — генерация иконок пропускается, остальное генерируется. Если заданы `notifications.serverUrl` / `appId` / `apiKey` — дополнительно генерирует `public/pwa-push.json` для автоматической конфигурации `createPushClient()`.
 
 ### `pwa-lib icons`
 
@@ -774,7 +851,7 @@ pwa-lib icons --input ./logo.png --output ./public/icons
 
 ### `pwa-lib dev`
 
-Watch mode. Следит за конфигом и `public/`, перегенерирует SW при изменениях.
+Watch mode. Следит за конфигом и `public/`, перегенерирует SW и `pwa-push.json` при изменениях.
 
 ```bash
 pwa-lib dev
@@ -1006,13 +1083,22 @@ const success = await notifications.unsubscribe()
 
 При клике на уведомление SW откроет `data.url` (или `/` если не указан). Если окно приложения уже открыто — сфокусирует его.
 
-### `createPushClient(config)`
+### `createPushClient(config?)`
 
 Высокоуровневый клиент для полного flow push-уведомлений с сервером. Один вызов `subscribe()` делает всё: проверяет поддержку, запрашивает разрешение, получает VAPID-ключ, подписывает через PushManager, отправляет подписку на сервер. Разработчику остаётся только привязать к кнопке.
+
+Конфиг подтягивается автоматически из `pwa-push.json` (генерируется при `pwa-lib generate`). Достаточно указать `serverUrl`, `appId`, `apiKey` в `pwa.config.ts` — и в клиентском коде ничего передавать не нужно:
 
 ```ts
 import { createPushClient } from 'pwa-lib/client'
 
+const push = createPushClient()
+await push.subscribe()
+```
+
+Если нужно переопределить конфиг вручную — можно передать явно:
+
+```ts
 const push = createPushClient({
   serverUrl: 'https://push.example.com',
   appId: 'my-app',
@@ -1030,12 +1116,8 @@ import { registerSW, notifications, createPushClient, PushClientError } from 'pw
 // 1. Регистрируем SW (обязательно до работы с push)
 await registerSW('/sw.js')
 
-// 2. Создаём push-клиент
-const push = createPushClient({
-  serverUrl: 'https://push.example.com',
-  appId: 'my-app',
-  apiKey: 'your-api-key',
-})
+// 2. Создаём push-клиент (конфиг подтягивается из pwa-push.json автоматически)
+const push = createPushClient()
 
 // 3. Определяем начальное состояние кнопки
 const btn = document.querySelector<HTMLButtonElement>('#push-btn')!
@@ -1102,11 +1184,7 @@ btn.addEventListener('click', async () => {
 import { useEffect, useState } from 'react'
 import { notifications, createPushClient, PushClientError } from 'pwa-lib/client'
 
-const push = createPushClient({
-  serverUrl: 'https://push.example.com',
-  appId: 'my-app',
-  apiKey: 'your-api-key',
-})
+const push = createPushClient()
 
 function PushButton() {
   const [subscribed, setSubscribed] = useState(false)
@@ -1205,12 +1283,12 @@ Retry-логика — ответственность потребителя. `c
 
 | Метод | Эндпоинт | Тело / Ответ |
 |-------|----------|--------------|
-| `GET` | `/apps/:appId/vapid-key` | → `{ publicKey: string }` |
-| `POST` | `/apps/:appId/subscriptions` | `PushSubscriptionData` → `200` |
-| `DELETE` | `/apps/:appId/subscriptions` | `{ endpoint: string }` → `200` |
-| `GET` | `/apps/:appId/subscriber-count` | → `{ count: number }` |
+| `GET` | `/api/apps/:appId/vapid-public-key` | → `{ vapidPublicKey: string }` — необязателен если `vapidPublicKey` передан в конфиге |
+| `POST` | `/api/apps/:appId/subscribe` | `PushSubscriptionData` → `201` |
+| `POST` | `/api/apps/:appId/unsubscribe` | `{ endpoint: string }` → `200` |
+| `GET` | `/api/apps/:appId/subscribers/count` | → `{ count: number }` |
 
-Все запросы содержат заголовки `Content-Type: application/json` и `X-API-Key: <apiKey>`.
+Все запросы (кроме `vapid-public-key`) содержат заголовки `Content-Type: application/json` и `X-API-Key: <apiKey>`.
 
 ---
 
@@ -1239,9 +1317,9 @@ import type {
 | `RouteConfig` | Маршрут: `match`, `strategy`, `cache?`, `maxAge?`, `maxEntries?` |
 | `SwConfig` | `output?`, `precache?`, `routes?` |
 | `ManifestConfig` | Все поля manifest (все опциональны) |
-| `NotificationsConfig` | `defaultIcon?`, `badge?` |
+| `NotificationsConfig` | `enabled?`, `defaultIcon?`, `badge?`, `vapidPublicKey?`, `serverUrl?`, `appId?`, `apiKey?` |
 | `IconEntry` | `size`, `name`, `purpose?` |
-| `PushClientConfig` | `serverUrl`, `appId`, `apiKey` |
+| `PushClientConfig` | `serverUrl?`, `appId?`, `apiKey?`, `vapidPublicKey?` |
 | `PushClient` | Интерфейс объекта от `createPushClient()`: `subscribe()`, `unsubscribe()`, `getSubscriberCount()` |
 | `PushSubscriptionData` | `endpoint`, `keys: { p256dh, auth }` |
 | `PushClientErrorCode` | Union кодов ошибок: `'NOT_SUPPORTED' \| 'PERMISSION_DENIED' \| ...` |
