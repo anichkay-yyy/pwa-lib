@@ -1,6 +1,6 @@
 {
   "name": "@anichkay/pwa-lib",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Zero-config CLI library for full PWA management",
   "type": "module",
   "author": "",
