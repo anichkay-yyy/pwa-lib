@@ -1,8 +1,18 @@
 {
-  "name": "pwa-lib",
-  "version": "0.1.0",
+  "name": "@anichkay/pwa-lib",
+  "version": "0.3.0",
   "description": "Zero-config CLI library for full PWA management",
   "type": "module",
+  "author": "",
+  "license": "MIT",
+  "keywords": [
+    "pwa",
+    "progressive-web-app",
+    "cli",
+    "manifest",
+    "service-worker",
+    "icons"
+  ],
   "bin": {
     "pwa-lib": "./dist/cli/index.js"
   },

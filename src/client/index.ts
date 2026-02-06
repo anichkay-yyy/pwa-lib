@@ -1,3 +1,5 @@
 export { registerSW } from './sw-register.js'
 export { notifications } from './notifications.js'
+export { createPushClient, PushClientError } from './push-client.js'
 export type { SwRegisterOptions, SubscribeOptions, NotificationsApi } from './types.js'
+export type { PushClientConfig, PushClient, PushSubscriptionData, PushClientErrorCode } from './push-client.types.js'

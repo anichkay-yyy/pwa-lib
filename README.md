@@ -1006,6 +1006,212 @@ const success = await notifications.unsubscribe()
 
 При клике на уведомление SW откроет `data.url` (или `/` если не указан). Если окно приложения уже открыто — сфокусирует его.
 
+### `createPushClient(config)`
+
+Высокоуровневый клиент для полного flow push-уведомлений с сервером. Один вызов `subscribe()` делает всё: проверяет поддержку, запрашивает разрешение, получает VAPID-ключ, подписывает через PushManager, отправляет подписку на сервер. Разработчику остаётся только привязать к кнопке.
+
+```ts
+import { createPushClient } from 'pwa-lib/client'
+
+const push = createPushClient({
+  serverUrl: 'https://push.example.com',
+  appId: 'my-app',
+  apiKey: 'your-api-key',
+})
+```
+
+#### Полный пример: кнопка подписки
+
+Типичный сценарий — кнопка «Подписаться на уведомления» в UI:
+
+```ts
+import { registerSW, notifications, createPushClient, PushClientError } from 'pwa-lib/client'
+
+// 1. Регистрируем SW (обязательно до работы с push)
+await registerSW('/sw.js')
+
+// 2. Создаём push-клиент
+const push = createPushClient({
+  serverUrl: 'https://push.example.com',
+  appId: 'my-app',
+  apiKey: 'your-api-key',
+})
+
+// 3. Определяем начальное состояние кнопки
+const btn = document.querySelector<HTMLButtonElement>('#push-btn')!
+const status = document.querySelector<HTMLSpanElement>('#push-status')!
+
+async function updateUI() {
+  const subscription = await notifications.getSubscription()
+  if (subscription) {
+    btn.textContent = 'Отписаться от уведомлений'
+    status.textContent = 'Уведомления включены'
+  } else {
+    btn.textContent = 'Подписаться на уведомления'
+    status.textContent = ''
+  }
+}
+
+// 4. Скрываем кнопку если браузер не поддерживает push
+if (!notifications.isSupported()) {
+  btn.hidden = true
+  status.textContent = 'Ваш браузер не поддерживает push-уведомления'
+} else {
+  await updateUI()
+}
+
+// 5. Обработчик клика — toggle подписки
+btn.addEventListener('click', async () => {
+  btn.disabled = true
+
+  try {
+    const subscription = await notifications.getSubscription()
+
+    if (subscription) {
+      await push.unsubscribe()
+    } else {
+      await push.subscribe()
+    }
+
+    await updateUI()
+  } catch (err) {
+    if (err instanceof PushClientError) {
+      switch (err.code) {
+        case 'PERMISSION_DENIED':
+          status.textContent = 'Вы запретили уведомления. Разрешите в настройках браузера.'
+          break
+        case 'NETWORK_ERROR':
+        case 'VAPID_FETCH_FAILED':
+        case 'SERVER_SUBSCRIBE_FAILED':
+        case 'SERVER_UNSUBSCRIBE_FAILED':
+          status.textContent = 'Ошибка сервера. Попробуйте позже.'
+          break
+        default:
+          status.textContent = 'Не удалось подписаться на уведомления.'
+      }
+    }
+  } finally {
+    btn.disabled = false
+  }
+})
+```
+
+#### Пример с React
+
+```tsx
+import { useEffect, useState } from 'react'
+import { notifications, createPushClient, PushClientError } from 'pwa-lib/client'
+
+const push = createPushClient({
+  serverUrl: 'https://push.example.com',
+  appId: 'my-app',
+  apiKey: 'your-api-key',
+})
+
+function PushButton() {
+  const [subscribed, setSubscribed] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const supported = notifications.isSupported()
+
+  useEffect(() => {
+    if (!supported) return
+    notifications.getSubscription().then((sub) => setSubscribed(!!sub))
+  }, [])
+
+  if (!supported) return null
+
+  async function handleClick() {
+    setLoading(true)
+    setError('')
+
+    try {
+      if (subscribed) {
+        await push.unsubscribe()
+        setSubscribed(false)
+      } else {
+        await push.subscribe()
+        setSubscribed(true)
+      }
+    } catch (err) {
+      if (err instanceof PushClientError) {
+        if (err.code === 'PERMISSION_DENIED') {
+          setError('Разрешите уведомления в настройках браузера')
+        } else {
+          setError('Не удалось. Попробуйте позже.')
+        }
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <>
+      <button onClick={handleClick} disabled={loading}>
+        {loading ? 'Загрузка...' : subscribed ? 'Отписаться' : 'Подписаться на уведомления'}
+      </button>
+      {error && <p>{error}</p>}
+    </>
+  )
+}
+```
+
+#### Счётчик подписчиков
+
+```ts
+const count = await push.getSubscriberCount()
+document.querySelector('#count')!.textContent = `${count} подписчиков`
+```
+
+#### API методов
+
+| Метод | Возвращает | Описание |
+|-------|------------|----------|
+| `subscribe()` | `Promise<PushSubscriptionData>` | Полный flow: поддержка → разрешение → VAPID → PushManager → сервер |
+| `unsubscribe()` | `Promise<void>` | Удаление на сервере → отписка в браузере. Если подписки нет — ничего не делает |
+| `getSubscriberCount()` | `Promise<number>` | Количество подписчиков с сервера |
+
+`subscribe()` возвращает `PushSubscriptionData`:
+```ts
+{
+  endpoint: 'https://fcm.googleapis.com/fcm/send/...',
+  keys: { p256dh: '...', auth: '...' }
+}
+```
+
+`unsubscribe()` — server-first: сначала удаляем на сервере, потом в браузере. Если сервер упал — подписка в браузере остаётся, можно повторить.
+
+#### Обработка ошибок
+
+Все методы бросают `PushClientError` с типизированным `code`:
+
+| Код | Когда |
+|-----|-------|
+| `NOT_SUPPORTED` | Браузер не поддерживает Notification / PushManager / SW |
+| `PERMISSION_DENIED` | Пользователь отклонил разрешение на уведомления |
+| `VAPID_FETCH_FAILED` | Сервер не вернул VAPID-ключ |
+| `SUBSCRIBE_FAILED` | Ошибка PushManager.subscribe() |
+| `SERVER_SUBSCRIBE_FAILED` | Сервер не принял подписку |
+| `SERVER_UNSUBSCRIBE_FAILED` | Сервер не удалил подписку |
+| `UNSUBSCRIBE_FAILED` | Ошибка отписки в браузере |
+| `NETWORK_ERROR` | Сетевой запрос не прошёл |
+
+Retry-логика — ответственность потребителя. `code` даёт достаточно информации, чтобы решить что показать пользователю и стоит ли повторять.
+
+#### Серверный API
+
+`createPushClient` ожидает следующие эндпоинты:
+
+| Метод | Эндпоинт | Тело / Ответ |
+|-------|----------|--------------|
+| `GET` | `/apps/:appId/vapid-key` | → `{ publicKey: string }` |
+| `POST` | `/apps/:appId/subscriptions` | `PushSubscriptionData` → `200` |
+| `DELETE` | `/apps/:appId/subscriptions` | `{ endpoint: string }` → `200` |
+| `GET` | `/apps/:appId/subscriber-count` | → `{ count: number }` |
+
+Все запросы содержат заголовки `Content-Type: application/json` и `X-API-Key: <apiKey>`.
+
 ---
 
 ## TypeScript
@@ -1035,6 +1241,10 @@ import type {
 | `ManifestConfig` | Все поля manifest (все опциональны) |
 | `NotificationsConfig` | `defaultIcon?`, `badge?` |
 | `IconEntry` | `size`, `name`, `purpose?` |
+| `PushClientConfig` | `serverUrl`, `appId`, `apiKey` |
+| `PushClient` | Интерфейс объекта от `createPushClient()`: `subscribe()`, `unsubscribe()`, `getSubscriberCount()` |
+| `PushSubscriptionData` | `endpoint`, `keys: { p256dh, auth }` |
+| `PushClientErrorCode` | Union кодов ошибок: `'NOT_SUPPORTED' \| 'PERMISSION_DENIED' \| ...` |
 
 ## Экспорты пакета
 
@@ -1042,7 +1252,7 @@ import type {
 |--------------|----------|
 | `pwa-lib` | Типы, `defineConfig()`, константы (`DEFAULT_CONFIG`, `DEFAULT_ROUTES`, `ICON_SEARCH_PATHS`) |
 | `pwa-lib/config` | Алиас для `pwa-lib` (для использования в конфиг-файлах) |
-| `pwa-lib/client` | Браузерный API: `registerSW()`, `notifications` |
+| `pwa-lib/client` | Браузерный API: `registerSW()`, `notifications`, `createPushClient()`, `PushClientError` |
 
 ---
 
@@ -1079,7 +1289,9 @@ pwa-lib/
 │   ├── client/                 # Браузерная библиотека
 │   │   ├── index.ts            # Экспорты
 │   │   ├── sw-register.ts      # registerSW()
-│   │   ├── notifications.ts    # Push API
+│   │   ├── notifications.ts    # Push API (низкоуровневый)
+│   │   ├── push-client.ts      # createPushClient() — высокоуровневый push-клиент
+│   │   ├── push-client.types.ts # Типы для push-клиента
 │   │   └── types.ts            # Клиентские типы
 │   └── shared/                 # Общие типы и дефолты
 │       ├── index.ts            # Экспорты
